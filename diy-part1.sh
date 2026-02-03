@@ -16,6 +16,6 @@ echo "src-git kenzo https://github.com/kenzok8/openwrt-packages.git;openwrt-23.0
 echo "src-git small https://github.com/kenzok8/small.git;openwrt-23.05" >> feeds.conf.default
 echo "src-git small8 https://github.com/kenzok8/small-package.git;main" >> feeds.conf.default
 
-# 安装必要的系统依赖（补充 opkg 编译依赖）
+# 安装必要的系统依赖（移除 opkg-utils，保留有效依赖）
 sudo apt update
-sudo apt install -y golang rustc cargo nodejs npm ruby ruby-dev opkg-utils libjson-c-dev
+sudo apt install -y golang rustc cargo nodejs npm ruby ruby-dev libjson-c-dev
