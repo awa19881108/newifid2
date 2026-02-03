@@ -26,22 +26,16 @@ jobs:
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
         sudo apt update -y
         sudo apt full-upgrade -y
-        # 增加内核编译依赖（关键修复）
-        sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget curl libxml2 libxml2-dev liblzma-dev libpam-dev libev-dev libelf-dev bc binutils bzip2 cpio findutils gzip libncurses-dev libssl-dev make patch perl tar xz-utils
+        # 补充 opkg 编译依赖
+        sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget curl libxml2 libxml2-dev liblzma-dev libpam-dev libev-dev libelf-dev bc binutils opkg-utils libjson-c-dev
         sudo apt autoremove -y && sudo apt clean -y
         sudo timedatectl set-timezone "$TZ"
 
-    - name: Clone source code (fix tag issue)
+    - name: Clone source code
       run: |
         git clone --depth 1 $REPO_URL openwrt
         cd openwrt
-        if git rev-parse --verify $REPO_TAG >/dev/null 2>&1; then
-          git checkout $REPO_TAG
-          echo "Successfully checked out tag: $REPO_TAG"
-        else
-          echo "Tag $REPO_TAG not found, use main branch instead"
-          git checkout main
-        fi
+        git checkout $REPO_TAG
 
     - name: Load custom feeds
       run: |
@@ -54,19 +48,10 @@ jobs:
         cd openwrt
         ./scripts/feeds update -a
 
-    - name: Fix csstidy hash mismatch (feeds更新后再修改文件)
+    - name: Install feeds (优先安装 opkg 相关组件)
       run: |
         cd openwrt
-        if [ -f "feeds/luci/contrib/package/csstidy/Makefile" ]; then
-          sed -i 's/a6db35de692d1b94561e725634ce410b75f5f7e26dc6f3fc92931813c0721ded/c90cdb3ff2ecae469d86abf04f5631356b8a913e03f4537c491ea31cde5f0225/g' feeds/luci/contrib/package/csstidy/Makefile
-          echo "csstidy hash updated successfully"
-        else
-          echo "csstidy Makefile not found, skip hash update"
-        fi
-
-    - name: Install feeds
-      run: |
-        cd openwrt
+        ./scripts/feeds install -y opkg luci-base luci-app-opkg  # 优先安装 opkg 组件
         ./scripts/feeds install -a
 
     - name: Load custom configuration
@@ -75,26 +60,22 @@ jobs:
         chmod +x ../$DIY_P2_SH
         ../$DIY_P2_SH
 
-    - name: Preprocess kernel config (关键修复：无交互生成内核配置)
+    - name: Preprocess kernel config
       run: |
         cd openwrt
-        echo -e "n\n" | make kernel_oldconfig  # 自动回答所有内核配置问题
+        make kernel_oldconfig
         make defconfig
 
     - name: Download packages
       run: |
         cd openwrt
-        rm -rf dl/csstidy*
-        make defconfig
         make download -j8
-        find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    - name: Compile firmware (降低编译线程，避免内存溢出)
+    - name: Compile firmware (单线程稳定编译)
       run: |
         cd openwrt
-        echo -e "1 thread compile (stable for mt7621)"
-        make -j1 V=s  # 单线程编译，减少内核编译错误
+        make -j1 V=s
 
     - name: Upload artifact
       uses: actions/upload-artifact@main
