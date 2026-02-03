@@ -48,16 +48,21 @@ jobs:
         chmod +x ../$DIY_P1_SH
         ../$DIY_P1_SH
 
-    - name: Fix csstidy hash mismatch
-      run: |
-        cd openwrt
-        # 替换 csstidy 的哈希值为实际下载的版本
-        sed -i 's/a6db35de692d1b94561e725634ce410b75f5f7e26dc6f3fc92931813c0721ded/c90cdb3ff2ecae469d86abf04f5631356b8a913e03f4537c491ea31cde5f0225/g' feeds/luci/contrib/package/csstidy/Makefile
-
-    - name: Update feeds
+    - name: Update feeds (先拉取feeds文件)
       run: |
         cd openwrt
         ./scripts/feeds update -a
+
+    - name: Fix csstidy hash mismatch (feeds更新后再修改文件)
+      run: |
+        cd openwrt
+        # 先检查文件是否存在，避免报错
+        if [ -f "feeds/luci/contrib/package/csstidy/Makefile" ]; then
+          sed -i 's/a6db35de692d1b94561e725634ce410b75f5f7e26dc6f3fc92931813c0721ded/c90cdb3ff2ecae469d86abf04f5631356b8a913e03f4537c491ea31cde5f0225/g' feeds/luci/contrib/package/csstidy/Makefile
+          echo "csstidy hash updated successfully"
+        else
+          echo "csstidy Makefile not found, skip hash update"
+        fi
 
     - name: Install feeds
       run: |
@@ -73,7 +78,8 @@ jobs:
     - name: Download packages
       run: |
         cd openwrt
-        rm -rf dl/csstidy*  # 删除旧的损坏文件
+        # 删除旧的损坏文件，确保重新下载
+        rm -rf dl/csstidy*
         make defconfig
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
@@ -84,12 +90,6 @@ jobs:
         cd openwrt
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@main
-      with:
-        name: OpenWRT_firmware
-        path: openwrt/bin/targets/
 
     - name: Upload artifact
       uses: actions/upload-artifact@main
