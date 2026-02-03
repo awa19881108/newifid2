@@ -79,6 +79,30 @@ jobs:
         make download -j8
         find dl -size -1024c -exec rm -f {} \;
 
+    - name: 增加 4GB 交换分区
+      run: |
+        # 1. 创建 4GB 交换文件（路径 /swapfile，大小可调整为 2G/8G）
+        sudo fallocate -l 4G /swapfile
+        # 2. 设置文件权限（仅 root 可读写，避免安全风险）
+        sudo chmod 600 /swapfile
+        # 3. 格式化文件为交换分区格式
+        sudo mkswap /swapfile
+        # 4. 启用交换分区
+        sudo swapon /swapfile
+        # 5. 验证交换分区是否生效（输出中会显示 Swap 大小）
+        free -h
+
+    - name: Compile firmware (单线程稳定编译)
+      run: |
+        cd openwrt
+        make -j1 V=s 2>&1 | tee compile_error.log  # 输出日志便于排查
+
+    - name: 清理交换分区（可选，避免占用磁盘空间）
+      if: always()  # 即使编译失败也执行清理
+      run: |
+        sudo swapoff /swapfile
+        sudo rm -f /swapfile
+    
     - name: Compile firmware (单线程稳定编译)
       run: |
         cd openwrt
