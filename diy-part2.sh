@@ -1,7 +1,6 @@
 #!/bin/bash
 # diy-part2.sh - 配置编译参数和软件包
-
-cd openwrt || exit
+# 注意：执行此脚本时已在 openwrt 目录下，无需再 cd
 
 # 1. 基础配置（适配 newifid2，mt7621 架构）
 cat > .config <<EOF
