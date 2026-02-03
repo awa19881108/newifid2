@@ -1,8 +1,6 @@
 #!/bin/bash
 # diy-part1.sh - 配置 feeds 源（适配 v23.05.3）
-
-# 进入 openwrt 目录
-cd openwrt || exit
+# 注意：执行此脚本时已在 openwrt 目录下，无需再 cd
 
 # 备份默认 feeds
 cp feeds.conf.default feeds.conf.default.bak
