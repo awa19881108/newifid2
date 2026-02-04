@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: 1. 初始化环境（修复时区权限+静默apt）
+      - name: 1. 初始化环境（静默+权限修复）
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -17,7 +17,7 @@ jobs:
           sudo apt update -y -qq && sudo apt full-upgrade -y -qq
           sudo apt install -y -qq build-essential clang flex bison g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget curl libelf-dev bc binutils
           sudo apt autoremove -y -qq && sudo apt clean -y -qq
-          # 修复时区设置：添加sudo+非交互式
+          # 时区设置容错，即使失败也不终止
           sudo timedatectl set-timezone "$TZ" || true
           ulimit -n 65535
 
@@ -29,26 +29,26 @@ jobs:
           ./scripts/feeds update core packages luci routing
           ./scripts/feeds install -y luci-base luci-app-opkg opkg wpad-basic-wolfssl
 
-      - name: 3. 添加适配23.05的第三方源（核心修复）
+      - name: 3. 添加SSR Plus+官方源（核心）
         run: |
           cd openwrt
-          # SSR Plus+官方源，完美适配23.05
+          # SSR Plus+官方维护源，适配23.05
           echo "src-git helloworld https://github.com/fw876/helloworld.git;main" >> feeds.conf.default
           ./scripts/feeds update helloworld
           ./scripts/feeds install -y luci-app-ssr-plus
-          # 补装主题
+          # 安装Argon主题
           ./scripts/feeds install -y luci-theme-argon
 
-      - name: 4. 配置Newifi D2专属编译参数
+      - name: 4. 配置Newifi D2编译参数
         run: |
           cd openwrt
-          # 修复mt7621内核配置
+          # 修复mt7621 6.1内核配置缺失
           cp target/linux/ramips/mt7621/config-5.15 target/linux/ramips/mt7621/config-6.1
           # 指定Newifi D2设备
           echo "CONFIG_TARGET_ramips=y" >> .config
           echo "CONFIG_TARGET_ramips_mt7621=y" >> .config
           echo "CONFIG_TARGET_ramips_mt7621_DEVICE_newifi-d2=y" >> .config
-          # 强制单线程
+          # 强制单线程编译，适配云编译资源
           echo "CONFIG_PARALLEL_MAKE=1" >> .config
           echo "CONFIG_PKG_BUILD_PARALLEL=0" >> .config
           # 启用核心功能
@@ -56,26 +56,23 @@ jobs:
           echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-ssr-plus=y" >> .config
           echo "CONFIG_PACKAGE_wpad-basic-wolfssl=y" >> .config
-          echo "CONFIG_KERNEL_MTD_SPLIT_OPENWRT_PROLOG=n" >> .config
-          # 清理配置
+          # 清理无效配置
           make defconfig
 
-      - name: 5. 修复所有编译坑点（兜底）
+      - name: 5. 仅修复必选坑点（删除所有无效修复）
         run: |
           cd openwrt
-          # 禁用fallocate，避免文件忙错误
+          # 仅修复fallocate文件忙错误（唯一必选修复）
           sed -i 's/fallocate -l/fallocate -l || truncate -s/g' include/image-commands.mk
-          # 所有警告不转错误
-          sed -i 's/CFLAGS += -Wall/CFLAGS += -Wall -Wno-error/g' include/target.mk
-          sed -i 's/CXXFLAGS += -Wall/CXXFLAGS += -Wall -Wno-error/g' include/target.mk
-          # 修复libressl编译冲突
-          sed -i 's/-Wno-pointer-sign/-Wno-pointer-sign -Wno-unused-variable/g' package/libs/libressl/Makefile
+          # 禁用警告转错误（只修改存在的文件）
+          sed -i 's/CFLAGS += -Wall/CFLAGS += -Wall -Wno-error/g' include/target.mk || true
+          sed -i 's/CXXFLAGS += -Wall/CXXFLAGS += -Wall -Wno-error/g' include/target.mk || true
 
       - name: 6. 单线程下载依赖包
         run: |
           cd openwrt
           make download -j1
-          # 删除空包
+          # 删除空包，避免下载失败
           find dl -size -1024c -exec rm -f {} \;
 
       - name: 7. 编译固件（失败重试一次）
@@ -84,12 +81,6 @@ jobs:
           make -j1 V=s || make -j1 V=s
 
       - name: 8. 上传固件
-        uses: actions/upload-artifact@v4
-        with:
-          name: NewifiD2-OpenWRT23.05-SSRPlus
-          path: openwrt/bin/targets/ramips/mt7621/*.bin
-
-      - name: 8. 上传固件（直接下载可用）
         uses: actions/upload-artifact@v4
         with:
           name: NewifiD2-OpenWRT23.05-SSRPlus
