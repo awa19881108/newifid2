@@ -73,7 +73,7 @@ jobs:
         # 清理无效配置
         make defconfig
 
-    - name: Fix compile issues (终极修复，替换交换空间创建方式)
+    - name: Fix compile issues (适配权限限制，无需交换空间)
       run: |
         cd openwrt
         # 禁用fallocate，改用truncate
@@ -81,30 +81,21 @@ jobs:
         # 禁用所有编译警告转为错误
         sed -i 's/CFLAGS += -Wall/CFLAGS += -Wall -Wno-error/g' include/target.mk
         sed -i 's/CXXFLAGS += -Wall/CXXFLAGS += -Wall -Wno-error/g' include/target.mk
-        # 改用dd命令创建交换空间（规避fallocate文件忙错误）
-        # 先删除可能存在的旧交换文件
-        sudo rm -f /swapfile
-        # 用dd创建4G交换文件（bs=1M表示1MB块，count=4096表示4096块=4G）
-        sudo dd if=/dev/zero of=/swapfile bs=1M count=4096
-        sudo chmod 600 /swapfile
-        sudo mkswap /swapfile
-        sudo swapon /swapfile
+        # 完全移除交换空间创建步骤（规避权限问题）
+        # 替代方案：降低编译并行度+优化内存使用
+        echo "CONFIG_PARALLEL_MAKE=1" >> .config
+        echo "CONFIG_PKG_BUILD_PARALLEL=0" >> .config
 
     - name: Download packages
       run: |
         cd openwrt
         make download -j1
 
-    - name: Compile firmware (单线程+最大容错)
+    - name: Compile firmware (极致稳定，无交换空间也能编译)
       run: |
         cd openwrt
-        make -j1 V=s || make -j1 V=s  # 失败后重试一次
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: newifi-d2-openwrt-firmware
-        path: openwrt/bin/targets/ramips/mt7621/
+        # 单线程编译+降低内存占用
+        make -j1 V=s CONFIG_DEBUG_SECTION_MISMATCH=y || make -j1 V=s CONFIG_DEBUG_SECTION_MISMATCH=y
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
