@@ -5,7 +5,7 @@ on:
 
 env:
   REPO_URL: https://github.com/openwrt/openwrt
-  REPO_BRANCH: openwrt-23.05  # 改用分支而非标签，兼容性更好
+  REPO_BRANCH: openwrt-23.05
   TZ: Asia/Shanghai
 
 jobs:
@@ -31,7 +31,8 @@ jobs:
       run: |
         git clone --depth 1 -b $REPO_BRANCH $REPO_URL openwrt
         cd openwrt
-        ./scripts/feeds update -a
+        # 移除 telephony 源，只更新核心源
+        ./scripts/feeds update core packages luci routing
 
     - name: Add stable third-party feeds (兼容v23.05)
       run: |
@@ -92,6 +93,12 @@ jobs:
       run: |
         cd openwrt
         make -j1 V=s || make -j1 V=s  # 失败后重试一次
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: newifi-d2-openwrt-firmware
+        path: openwrt/bin/targets/ramips/mt7621/
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
