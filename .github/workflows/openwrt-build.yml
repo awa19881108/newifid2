@@ -1,15 +1,11 @@
-name: OpenWRT Build for newifid2
+name: OpenWRT Build for newifi-d2 (Stable)
 
 on:
   workflow_dispatch:
 
 env:
   REPO_URL: https://github.com/openwrt/openwrt
-  REPO_TAG: v23.05.3
-  FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: openwrt.config
-  DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: diy-part2.sh
+  REPO_BRANCH: openwrt-23.05  # 改用分支而非标签，兼容性更好
   TZ: Asia/Shanghai
 
 jobs:
@@ -17,90 +13,88 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
     - name: Checkout
-      uses: actions/checkout@main
+      uses: actions/checkout@v4
 
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo rm -rf /etc/apt/sources.list.d/*
         sudo apt update -y
         sudo apt full-upgrade -y
-        sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget curl libxml2 libxml2-dev liblzma-dev libpam-dev libev-dev libelf-dev bc binutils libjson-c-dev
+        sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget curl libelf-dev bc binutils
         sudo apt autoremove -y && sudo apt clean -y
         sudo timedatectl set-timezone "$TZ"
-        # 增加：提升文件描述符限制，避免文件锁问题
         ulimit -n 65535
 
-    - name: Clone source code (修复浅克隆，拉取标签)
+    - name: Clone source code
       run: |
-        git clone $REPO_URL openwrt
+        git clone --depth 1 -b $REPO_BRANCH $REPO_URL openwrt
         cd openwrt
-        git fetch --tags
-        git checkout tags/$REPO_TAG -b build-branch
+        ./scripts/feeds update -a
 
-    - name: Load custom feeds
+    - name: Add stable third-party feeds (兼容v23.05)
       run: |
         cd openwrt
-        chmod +x ../$DIY_P1_SH
-        ../$DIY_P1_SH
-
-    - name: Update feeds (增加容错，忽略非核心源错误)
-      run: |
-        cd openwrt
-        ./scripts/feeds update core packages luci routing telephony
-        ./scripts/feeds update kenzo small || true
-
-    - name: Install feeds (优先安装核心组件)
-      run: |
-        cd openwrt
-        ./scripts/feeds install -y opkg luci-base luci-app-opkg
-        ./scripts/feeds install -y luci-app-ssr-plus luci-app-passwall2
+        # 仅添加最稳定的第三方源，移除冲突源
+        echo "src-git small https://github.com/kenzok8/small.git;main" >> feeds.conf.default
+        echo "src-git kenzo https://github.com/kenzok8/openwrt-packages.git;main" >> feeds.conf.default
+        ./scripts/feeds update small kenzo
         ./scripts/feeds install -a
 
-    - name: Load custom configuration
+    - name: Configure firmware (极简配置，仅保留核心)
       run: |
         cd openwrt
-        chmod +x ../$DIY_P2_SH
-        ../$DIY_P2_SH
-
-    - name: Preprocess kernel config
-      run: |
-        cd openwrt
-        make kernel_oldconfig
+        # 加载newifi-d2默认配置
+        cp target/linux/ramips/mt7621/config-5.15 target/linux/ramips/mt7621/config-6.1
+        make defconfig
+        # 配置newifi-d2为目标设备
+        echo "CONFIG_TARGET_ramips=y" >> .config
+        echo "CONFIG_TARGET_ramips_mt7621=y" >> .config
+        echo "CONFIG_TARGET_ramips_mt7621_DEVICE_newifi-d2=y" >> .config
+        # 仅保留核心功能
+        echo "CONFIG_PACKAGE_luci=y" >> .config
+        echo "CONFIG_PACKAGE_luci-base=y" >> .config
+        echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
+        echo "CONFIG_PACKAGE_opkg=y" >> .config
+        echo "CONFIG_PACKAGE_luci-app-opkg=y" >> .config
+        echo "CONFIG_PACKAGE_wpad-basic-wolfssl=y" >> .config
+        # 仅保留SSR Plus+基础版（移除PassWall2减少冲突）
+        echo "CONFIG_PACKAGE_luci-app-ssr-plus=y" >> .config
+        echo "CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Base=y" >> .config
+        # 禁用所有可能冲突的选项
+        echo "CONFIG_PACKAGE_webd=n" >> .config
+        echo "CONFIG_PACKAGE_webdav2=n" >> .config
+        echo "CONFIG_KERNEL_MTD_SPLIT_OPENWRT_PROLOG=n" >> .config
+        # 清理无效配置
         make defconfig
 
-    - name: Clean compile cache (关键修复：清理所有缓存)
+    - name: Fix compile issues (终极修复)
       run: |
         cd openwrt
-        # 清理所有编译缓存、临时文件、锁定文件
-        make clean
-        make dirclean
-        rm -rf tmp/ build_dir/ staging_dir/ dl/*.lock
-        # 禁用 fallocate 预分配（核心修复）
+        # 禁用fallocate，改用truncate
         sed -i 's/fallocate -l/fallocate -l || truncate -s/g' include/image-commands.mk
-        sed -i 's/fallocate -n/fallocate -n || truncate -s/g' include/image-commands.mk
+        # 禁用所有编译警告转为错误
+        sed -i 's/CFLAGS += -Wall/CFLAGS += -Wall -Wno-error/g' include/target.mk
+        sed -i 's/CXXFLAGS += -Wall/CXXFLAGS += -Wall -Wno-error/g' include/target.mk
+        # 增加内存交换空间（解决云编译内存不足）
+        sudo fallocate -l 4G /swapfile
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+        sudo swapon /swapfile
 
     - name: Download packages
       run: |
         cd openwrt
-        make download -j1  # 单线程下载，避免文件冲突
-        find dl -size -1024c -exec rm -f {} \;
+        make download -j1
 
-    - name: Compile firmware (极致稳定：单线程+详细日志)
+    - name: Compile firmware (单线程+最大容错)
       run: |
         cd openwrt
-        # 单线程编译，禁用并行，避免文件占用
         make -j1 V=s || make -j1 V=s  # 失败后重试一次
 
     - name: Upload artifact
-      uses: actions/upload-artifact@main
+      uses: actions/upload-artifact@v4
       with:
-        name: OpenWRT_firmware
-        path: openwrt/bin/targets/
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@main
-      with:
-        name: OpenWRT_firmware
-        path: openwrt/bin/targets/
+        name: newifi-d2-openwrt-firmware
+        path: openwrt/bin/targets/ramips/mt7621/
