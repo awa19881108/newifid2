@@ -73,7 +73,7 @@ jobs:
         # 清理无效配置
         make defconfig
 
-    - name: Fix compile issues (终极修复)
+    - name: Fix compile issues (终极修复，替换交换空间创建方式)
       run: |
         cd openwrt
         # 禁用fallocate，改用truncate
@@ -81,8 +81,11 @@ jobs:
         # 禁用所有编译警告转为错误
         sed -i 's/CFLAGS += -Wall/CFLAGS += -Wall -Wno-error/g' include/target.mk
         sed -i 's/CXXFLAGS += -Wall/CXXFLAGS += -Wall -Wno-error/g' include/target.mk
-        # 增加内存交换空间（解决云编译内存不足）
-        sudo fallocate -l 4G /swapfile
+        # 改用dd命令创建交换空间（规避fallocate文件忙错误）
+        # 先删除可能存在的旧交换文件
+        sudo rm -f /swapfile
+        # 用dd创建4G交换文件（bs=1M表示1MB块，count=4096表示4096块=4G）
+        sudo dd if=/dev/zero of=/swapfile bs=1M count=4096
         sudo chmod 600 /swapfile
         sudo mkswap /swapfile
         sudo swapon /swapfile
