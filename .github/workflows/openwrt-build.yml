@@ -1,42 +1,45 @@
-name: Newifi D2 OpenWRT 22.03 集成SSR Plus+ (100%成功)
+name: Newifi D2 OpenWRT 22.03 集成SSR Plus+ (最终修复版)
 on:
   workflow_dispatch:
 env:
   REPO_URL: https://github.com/openwrt/openwrt
-  REPO_BRANCH: openwrt-22.03  # 改用22.03，mt7621兼容性拉满
+  REPO_BRANCH: openwrt-22.03
   TZ: Asia/Shanghai
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: 1. 初始化环境
+      - name: 1. 初始化环境（精简依赖）
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt update -y -qq && sudo apt full-upgrade -y -qq
-          sudo apt install -y -qq build-essential clang flex bison g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget curl libelf-dev bc binutils
+          # 只装编译必需依赖，删除冗余包
+          sudo apt install -y -qq build-essential flex bison g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev wget curl libelf-dev bc binutils
           sudo apt autoremove -y -qq && sudo apt clean -y -qq
           sudo timedatectl set-timezone "$TZ" || true
           ulimit -n 65535
 
-      - name: 2. 克隆OpenWRT 22.03源码（无内核适配坑）
+      - name: 2. 克隆源码+更新核心源（不更telephony）
         run: |
           git clone --depth 1 -b $REPO_BRANCH $REPO_URL openwrt
           cd openwrt
-          ./scripts/feeds update -a  # 22.03全量更新无telephony坑
-          ./scripts/feeds install -a
+          # 只更新核心源，避免telephony等冗余源的冲突
+          ./scripts/feeds update core packages luci routing
+          # 不执行./scripts/feeds install -a！只装必需包
+          ./scripts/feeds install -y luci-base luci-app-opkg opkg wpad-basic-wolfssl
 
-      - name: 3. 添加SSR Plus+官方源（完美适配22.03）
+      - name: 3. 添加SSR Plus+源+安装必需插件
         run: |
           cd openwrt
           echo "src-git helloworld https://github.com/fw876/helloworld.git;main" >> feeds.conf.default
           ./scripts/feeds update helloworld
+          # 只装SSR+主题，不装其他无关插件
           ./scripts/feeds install -y luci-app-ssr-plus luci-theme-argon
 
-      - name: 4. 一键配置Newifi D2（无任何冗余）
+      - name: 4. 配置Newifi D2（精简配置）
         run: |
           cd openwrt
-          # 22.03对mt7621有完善的默认配置，无需手动复制内核配置
           echo "CONFIG_TARGET_ramips=y" >> .config
           echo "CONFIG_TARGET_ramips_mt7621=y" >> .config
           echo "CONFIG_TARGET_ramips_mt7621_DEVICE_newifi-d2=y" >> .config
@@ -44,11 +47,10 @@ jobs:
           echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-ssr-plus=y" >> .config
           echo "CONFIG_PACKAGE_wpad-basic-wolfssl=y" >> .config
-          # 强制单线程，云编译稳如狗
           echo "CONFIG_PARALLEL_MAKE=1" >> .config
           make defconfig
 
-      - name: 5. 仅修复fallocate（唯一必选）
+      - name: 5. 修复fallocate（唯一必选修复）
         run: |
           cd openwrt
           sed -i 's/fallocate -l/fallocate -l || truncate -s/g' include/image-commands.mk
@@ -59,11 +61,16 @@ jobs:
           make download -j1
           find dl -size -1024c -exec rm -f {} \;
 
-      - name: 7. 编译固件（必过）
+      - name: 7. 编译固件
         run: |
           cd openwrt
           make -j1 V=s || make -j1 V=s
 
+      - name: 8. 上传固件
+        uses: actions/upload-artifact@v4
+        with:
+          name: NewifiD2-OpenWRT22.03-SSRPlus
+          path: openwrt/bin/targets/ramips/mt7621/*.bin
       - name: 8. 上传固件
         uses: actions/upload-artifact@v4
         with:
