@@ -29,6 +29,8 @@ jobs:
         sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget curl libxml2 libxml2-dev liblzma-dev libpam-dev libev-dev libelf-dev bc binutils libjson-c-dev
         sudo apt autoremove -y && sudo apt clean -y
         sudo timedatectl set-timezone "$TZ"
+        # 增加：提升文件描述符限制，避免文件锁问题
+        ulimit -n 65535
 
     - name: Clone source code (修复浅克隆，拉取标签)
       run: |
@@ -46,19 +48,14 @@ jobs:
     - name: Update feeds (增加容错，忽略非核心源错误)
       run: |
         cd openwrt
-        # 先更新官方源，确保核心组件可用
         ./scripts/feeds update core packages luci routing telephony
-        # 再更新第三方源，忽略错误（即使失败也继续）
         ./scripts/feeds update kenzo small || true
 
     - name: Install feeds (优先安装核心组件)
       run: |
         cd openwrt
-        # 优先安装官方核心组件
         ./scripts/feeds install -y opkg luci-base luci-app-opkg
-        # 安装第三方组件（SSR/PassWall2）
         ./scripts/feeds install -y luci-app-ssr-plus luci-app-passwall2
-        # 安装剩余组件
         ./scripts/feeds install -a
 
     - name: Load custom configuration
@@ -73,40 +70,28 @@ jobs:
         make kernel_oldconfig
         make defconfig
 
+    - name: Clean compile cache (关键修复：清理所有缓存)
+      run: |
+        cd openwrt
+        # 清理所有编译缓存、临时文件、锁定文件
+        make clean
+        make dirclean
+        rm -rf tmp/ build_dir/ staging_dir/ dl/*.lock
+        # 禁用 fallocate 预分配（核心修复）
+        sed -i 's/fallocate -l/fallocate -l || truncate -s/g' include/image-commands.mk
+        sed -i 's/fallocate -n/fallocate -n || truncate -s/g' include/image-commands.mk
+
     - name: Download packages
       run: |
         cd openwrt
-        make download -j8
+        make download -j1  # 单线程下载，避免文件冲突
         find dl -size -1024c -exec rm -f {} \;
 
-    - name: 增加 4GB 交换分区
-      run: |
-        # 1. 创建 4GB 交换文件（路径 /swapfile，大小可调整为 2G/8G）
-        sudo fallocate -l 4G /swapfile
-        # 2. 设置文件权限（仅 root 可读写，避免安全风险）
-        sudo chmod 600 /swapfile
-        # 3. 格式化文件为交换分区格式
-        sudo mkswap /swapfile
-        # 4. 启用交换分区
-        sudo swapon /swapfile
-        # 5. 验证交换分区是否生效（输出中会显示 Swap 大小）
-        free -h
-
-    - name: Compile firmware (单线程稳定编译)
+    - name: Compile firmware (极致稳定：单线程+详细日志)
       run: |
         cd openwrt
-        make -j1 V=s 2>&1 | tee compile_error.log  # 输出日志便于排查
-
-    - name: 清理交换分区（可选，避免占用磁盘空间）
-      if: always()  # 即使编译失败也执行清理
-      run: |
-        sudo swapoff /swapfile
-        sudo rm -f /swapfile
-    
-    - name: Compile firmware (单线程稳定编译)
-      run: |
-        cd openwrt
-        make -j1 V=s
+        # 单线程编译，禁用并行，避免文件占用
+        make -j1 V=s || make -j1 V=s  # 失败后重试一次
 
     - name: Upload artifact
       uses: actions/upload-artifact@main
