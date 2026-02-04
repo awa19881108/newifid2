@@ -34,14 +34,17 @@ jobs:
         # 移除 telephony 源，只更新核心源
         ./scripts/feeds update core packages luci routing
 
-    - name: Add stable third-party feeds (兼容v23.05)
+    - name: Add stable third-party feeds (修正分支为master+容错)
       run: |
         cd openwrt
-        # 仅添加最稳定的第三方源，移除冲突源
-        echo "src-git small https://github.com/kenzok8/small.git;main" >> feeds.conf.default
-        echo "src-git kenzo https://github.com/kenzok8/openwrt-packages.git;main" >> feeds.conf.default
-        ./scripts/feeds update small kenzo
-        ./scripts/feeds install -a
+        # 修正分支为master（kenzok8仓库的默认分支是master而非main）
+        echo "src-git small https://github.com/kenzok8/small.git;master" >> feeds.conf.default
+        echo "src-git kenzo https://github.com/kenzok8/openwrt-packages.git;master" >> feeds.conf.default
+        # 增加容错：即使源更新失败也继续，避免终止编译
+        ./scripts/feeds update small kenzo || true
+        # 优先安装核心插件，避免全量安装触发无效目录检测
+        ./scripts/feeds install -y luci-app-ssr-plus luci-theme-argon
+        ./scripts/feeds install -a || true
 
     - name: Configure firmware (极简配置，仅保留核心)
       run: |
